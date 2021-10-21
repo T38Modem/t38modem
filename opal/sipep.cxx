@@ -125,6 +125,7 @@
 #include <ptlib.h>
 #include <iostream>
 #include <fstream>
+#include <list>
 
 #include <opal_config.h>
 
@@ -260,8 +261,24 @@ bool MyRTPEndPoint::Initialise(PArgList & args, ostream & output, bool verbose)
 
 /////////////////////////////////////////////////////////////////////////////
 
-void MySIPRegisterHandler::OnReceivedIntervalTooBrief(SIPTransaction & transaction, SIP_PDU & response)
-{
+void MySIPRegisterHandler::OnReceivedOK(SIPTransaction & transaction, SIP_PDU & response){
+  SIPRegisterHandler::OnReceivedOK(transaction, response);
+
+  // If we were coming from a retry then we sould filter out bad contact strings
+  // from now on. Retry will force us to be offline for 30 seconds and will impact
+  // incoming calls if the registrar consistently adds a bad contact param every
+  // registration refresh.
+  if (m_retrying) {
+    m_retrying = false;
+    m_sanitize = true;
+  }
+
+  if (m_sanitize)
+    SanitizeContact();
+}
+
+void MySIPRegisterHandler::OnReceivedIntervalTooBrief(SIPTransaction & transaction, SIP_PDU & response){
+
   long minExpires = response.GetMIME().GetMinExpires();
   for (SIPURLList::iterator contact = m_contactAddresses.begin(); contact != m_contactAddresses.end(); ++contact) {
     long expires = contact->GetFieldParameters().GetInteger("expires", 0);
@@ -273,6 +290,60 @@ void MySIPRegisterHandler::OnReceivedIntervalTooBrief(SIPTransaction & transacti
   SIPHandler::OnReceivedIntervalTooBrief(transaction, response);
 }
 
+void MySIPRegisterHandler::OnFailed(SIP_PDU::StatusCodes code) {
+
+  // Adding recovery for a case where the registrar (cisco) was adding 'q25'
+  // parameter in the contact field. Check for unwanted strings in the contact
+  // and then retry once
+  if (code == SIP_PDU::Failure_BadRequest && !m_retrying && SanitizeContact() ) {
+    PTRACE(5, "SIP\tMySIPRegisterHandler::OnFailed: retrying registration");
+    m_retrying = true;
+    m_sanitize = false;
+    m_lastResponseStatus = code;
+    SendStatus(code, GetState());
+
+    if (GetState() != Unsubscribing)
+      SetState(Unavailable);
+
+  } else {
+    SIPHandler::OnFailed(code);
+  }
+}
+
+bool MySIPRegisterHandler::SanitizeContact(){
+
+  bool contactChanged = false;
+  // See list in: https://www.iana.org/assignments/sip-parameters/sip-parameters.xhtml
+  // Also added some cisco specific parameters
+  const std::list<const char*> supportedParms = {
+    "expires",
+    "mp",
+    "np",
+    "pub-gruu",
+    "q",
+    "rc",
+    "reg-id",
+    "temp-gruu",
+    "temp-gruu-cookie",
+    "+sip.instance",
+    "+u.sip!devicename.ccm.features.cisco.com",
+    "+u.sip!model.ccm.cisco.com",
+    "x-cisco-newreg"
+  };
+
+  for (SIPURLList::iterator contact = m_contactAddresses.begin(); contact != m_contactAddresses.end(); ++contact) {
+    PStringOptions params = contact->GetFieldParameters();
+    for (PStringOptions::const_iterator it = params.begin(); it != params.end(); ++it) {
+      if (std::find(supportedParms.begin(), supportedParms.end(), it->first) == supportedParms.end()) {
+         contact->GetFieldParameters().Remove(it->first);
+         contactChanged = true;
+      }
+    }
+  }
+  PTRACE_IF(5, contactChanged, "SIP\tMySIPRegisterHandler::SanitizeContact m_contactAddresses = " << m_contactAddresses);
+
+  return contactChanged;
+}
 
 /////////////////////////////////////////////////////////////////////////////
 
@@ -552,6 +623,7 @@ bool MySIPEndPoint::Initialise(PArgList & args, bool verbose, const PString & de
         }
         output << endl;
 
+        PTRACE(5, "MySIPEndPoint::Initialise params =" << params);
         if (!Register(params, regs[i])) {
           cerr << "Could not start SIP registration to " << params.m_addressOfRecord << endl;
           return FALSE;

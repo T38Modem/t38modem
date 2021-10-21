@@ -79,15 +79,24 @@ class MySIPRegisterHandler : public SIPRegisterHandler
 {
   PCLASSINFO(MySIPRegisterHandler, SIPRegisterHandler);
 
-  public:
-    MySIPRegisterHandler(
-      SIPEndPoint & ep,
-      const SIPRegister::Params & params
-    )
-    : SIPRegisterHandler(ep, params)
-    {}
+public:
+  MySIPRegisterHandler(  SIPEndPoint & ep, const SIPRegister::Params & params)
+    : SIPRegisterHandler(ep, params), m_retrying(false), m_sanitize(false) {}
 
-    virtual void OnReceivedIntervalTooBrief(SIPTransaction & transaction, SIP_PDU & response);
+  ~MySIPRegisterHandler()
+  {
+    cout << "Deleting SIPRegisterHandler..." << endl;
+  }
+
+  virtual void OnReceivedOK(SIPTransaction & transaction, SIP_PDU & response);
+  virtual void OnReceivedIntervalTooBrief(SIPTransaction & transaction, SIP_PDU & response);
+  virtual void OnFailed(SIP_PDU::StatusCodes code);
+
+protected:
+  bool SanitizeContact();
+
+  bool m_retrying;
+  bool m_sanitize;
 };
 
 /////////////////////////////////////////////////////////////////////////////
