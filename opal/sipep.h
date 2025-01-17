@@ -80,8 +80,10 @@ class MySIPRegisterHandler : public SIPRegisterHandler
   PCLASSINFO(MySIPRegisterHandler, SIPRegisterHandler);
 
 public:
-  MySIPRegisterHandler(  SIPEndPoint & ep, const SIPRegister::Params & params)
-    : SIPRegisterHandler(ep, params), m_retrying(false), m_sanitize(false) {}
+  MySIPRegisterHandler( SIPEndPoint & ep, const
+                        SIPRegister::Params & params, bool retry423 )
+    : SIPRegisterHandler(ep, params), m_retrying(false), m_sanitize(false)
+    , m_retry423(retry423 ) {}
 
   ~MySIPRegisterHandler()
   {
@@ -97,6 +99,7 @@ protected:
 
   bool m_retrying;
   bool m_sanitize;
+  const bool m_retry423;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -128,6 +131,9 @@ public:
                       const char * ttl,
                       const char * resultFile);
   SIPRegisterHandler * CreateRegisterHandler(const SIPRegister::Params & params);
+
+private:
+  bool m_retry423;
 };
 
 /////////////////////////////////////////////////////////////////////////////

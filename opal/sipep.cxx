@@ -279,15 +279,20 @@ void MySIPRegisterHandler::OnReceivedOK(SIPTransaction & transaction, SIP_PDU & 
 
 void MySIPRegisterHandler::OnReceivedIntervalTooBrief(SIPTransaction & transaction, SIP_PDU & response){
 
-  long minExpires = response.GetMIME().GetMinExpires();
-  for (SIPURLList::iterator contact = m_contactAddresses.begin(); contact != m_contactAddresses.end(); ++contact) {
-    long expires = contact->GetFieldParameters().GetInteger("expires", 0);
-    if (expires > 0 && expires < minExpires) {
-      PTRACE(5, "SIP\tMySIPRegisterHandler::OnReceivedIntervalTooBrief: setting expires=" << minExpires);
-      contact->GetFieldParameters().SetInteger("expires", minExpires);
+  if (m_retry423) {
+    long minExpires = response.GetMIME().GetMinExpires();
+    for (SIPURLList::iterator contact = m_contactAddresses.begin(); contact != m_contactAddresses.end(); ++contact) {
+      long expires = contact->GetFieldParameters().GetInteger("expires", 0);
+      if (expires > 0 && expires < minExpires) {
+        PTRACE(5, "SIP\tMySIPRegisterHandler::OnReceivedIntervalTooBrief: setting expires=" << minExpires);
+        contact->GetFieldParameters().SetInteger("expires", minExpires);
+      }
     }
+    SIPHandler::OnReceivedIntervalTooBrief(transaction, response);
   }
-  SIPHandler::OnReceivedIntervalTooBrief(transaction, response);
+  else {
+    OnFailed(response.GetStatusCode());
+  }
 }
 
 void MySIPRegisterHandler::OnFailed(SIP_PDU::StatusCodes code) {
@@ -350,6 +355,7 @@ bool MySIPRegisterHandler::SanitizeContact(){
 MySIPEndPoint::MySIPEndPoint(MyManager & manager)
   : SIPEndPoint(manager)
   , MyRTPEndPoint(manager, this)
+  , m_retry423(false)
 {
 }
 
@@ -482,9 +488,9 @@ PString MySIPEndPoint::GetArgumentSpec()
           "    AFxx for Assured Forwarding, valid AF names:\r"
           "       AF11, AF12, AF13, AF21, AF22, AF23, AF31, AF32, AF33, AF41, AF42, AF43\r"
           "    CSn for Class Selector (n is 0-7)\n"
-          "-sip-retry-403-forbidden: Enable retrying on 403 Forbidden responses. This violates\r"
-          "RFC 3261, but is needed by some SIP servers.\n";
-
+          "-sip-retry-403-forbidden. Enable retrying on 403 Forbidden responses. This violates\r"
+          "RFC 3261, but is needed by some SIP servers.\n"
+          "-sip-no-retry-423. Disable retrying on 423 'Interval Too Brief' SIP response.\n";
 }
 
 
@@ -527,6 +533,11 @@ bool MySIPEndPoint::Initialise(PArgList & args, bool verbose, const PString & de
     retryForbidden=true;
   else
     retryForbidden=false;
+
+  if (args.HasOption("sip-no-retry-423"))
+    m_retry423 = false;
+  else
+    m_retry423 = true;
 
   if (args.HasOption("sip-register")) {
     PString r = args.GetOptionString("sip-register");
@@ -638,7 +649,7 @@ bool MySIPEndPoint::Initialise(PArgList & args, bool verbose, const PString & de
 
 SIPRegisterHandler * MySIPEndPoint::CreateRegisterHandler(const SIPRegister::Params & params)
 {
-  return new MySIPRegisterHandler(*this, params);
+  return new MySIPRegisterHandler(*this, params, m_retry423);
 }
 
 
