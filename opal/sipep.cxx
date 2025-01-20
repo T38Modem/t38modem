@@ -352,10 +352,44 @@ bool MySIPRegisterHandler::SanitizeContact(){
 
 /////////////////////////////////////////////////////////////////////////////
 
+bool MySIPConnection::OnReceivedResponseToINVITE(SIPTransaction & transaction, SIP_PDU & response)
+{
+  WriteResponseToFile(transaction, response);
+  return SIPConnection::OnReceivedResponseToINVITE(transaction, response);
+}
+
+void MySIPConnection::OnReceivedResponse(SIPTransaction & transaction, SIP_PDU & response)
+{
+  WriteResponseToFile(transaction, response);
+  SIPConnection::OnReceivedResponse(transaction, response);
+}
+
+void MySIPConnection::WriteResponseToFile(const SIPTransaction & transaction, const SIP_PDU & response)
+{
+  if (m_statusFile.IsEmpty()) {
+    return;
+  }
+
+  OpalTransportPtr transport = transaction.GetTransport();
+  ofstream statusFile;
+  string outFile = m_statusFile;
+
+  statusFile.open(outFile, ios::out | ios::trunc);
+  if (statusFile.is_open()) {
+    statusFile << "{status:" << (int) response.GetStatusCode() << ",remote:";
+    if (transport)
+      statusFile << transport->GetRemoteAddress().GetHostName(false);
+    statusFile << "}" << endl;
+  }
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
 MySIPEndPoint::MySIPEndPoint(MyManager & manager)
   : SIPEndPoint(manager)
   , MyRTPEndPoint(manager, this)
-  , m_retry423(false)
+  , m_retry423(true)
+  , m_statusFile()
 {
 }
 
@@ -490,7 +524,8 @@ PString MySIPEndPoint::GetArgumentSpec()
           "    CSn for Class Selector (n is 0-7)\n"
           "-sip-retry-403-forbidden. Enable retrying on 403 Forbidden responses. This violates\r"
           "RFC 3261, but is needed by some SIP servers.\n"
-          "-sip-no-retry-423. Disable retrying on 423 'Interval Too Brief' SIP response.\n";
+          "-sip-no-retry-423. Disable retrying on 423 'Interval Too Brief' SIP response.\n"
+          "-sip-status-file:  File where the SIP transaction response is written.\n";
 }
 
 
@@ -538,6 +573,9 @@ bool MySIPEndPoint::Initialise(PArgList & args, bool verbose, const PString & de
     m_retry423 = false;
   else
     m_retry423 = true;
+
+  if (args.HasOption("sip-status-file"))
+    m_statusFile = args.GetOptionString("sip-status-file");
 
   if (args.HasOption("sip-register")) {
     PString r = args.GetOptionString("sip-register");
@@ -634,6 +672,16 @@ bool MySIPEndPoint::Initialise(PArgList & args, bool verbose, const PString & de
         }
         output << endl;
 
+        if (!m_statusFile.IsEmpty()) {
+          ofstream statusFile;
+          string outFile = m_statusFile;
+          statusFile.open(outFile.c_str(),ios::out | ios::trunc);
+          if (statusFile.is_open()) {
+            statusFile << "{status:SIP Initialize,remote:"
+                    << params.m_registrarAddress << "}" << endl;
+          }
+        }
+
         PTRACE(5, "MySIPEndPoint::Initialise params =" << params);
         if (!Register(params, regs[i])) {
           cerr << "Could not start SIP registration to " << params.m_addressOfRecord << endl;
@@ -650,6 +698,11 @@ bool MySIPEndPoint::Initialise(PArgList & args, bool verbose, const PString & de
 SIPRegisterHandler * MySIPEndPoint::CreateRegisterHandler(const SIPRegister::Params & params)
 {
   return new MySIPRegisterHandler(*this, params, m_retry423);
+}
+
+SIPConnection * MySIPEndPoint::CreateConnection(const SIPConnection::Init & init)
+{
+  return new MySIPConnection(init, m_statusFile);
 }
 
 

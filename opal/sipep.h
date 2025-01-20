@@ -51,6 +51,7 @@
 #ifndef _MY_SIPEP_H
 #define _MY_SIPEP_H
 
+#include <sip/sipcon.h>
 #include <sip/sipep.h>
 #include "manager.h"
 #include "../pmutils.h"
@@ -104,6 +105,30 @@ protected:
 
 /////////////////////////////////////////////////////////////////////////////
 
+class MySIPConnection : public SIPConnection
+{
+  PCLASSINFO(MySIPConnection, SIPConnection);
+
+public:
+  MySIPConnection( const SIPConnection::Init & init, std::string statusFile )
+    : SIPConnection(init), m_statusFile(statusFile) {}
+
+  ~MySIPConnection()
+  {
+    cout << "Deleting MySIPConnection..." << endl;
+  }
+
+  virtual bool OnReceivedResponseToINVITE(SIPTransaction & transaction, SIP_PDU & response);
+  virtual void OnReceivedResponse(SIPTransaction & transaction, SIP_PDU & response);
+
+private:
+  void WriteResponseToFile(const SIPTransaction & transaction, const SIP_PDU & response);
+
+  const PString m_statusFile;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
 class MySIPEndPoint : public SIPEndPoint, public MyRTPEndPoint
 {
   PCLASSINFO(MySIPEndPoint, SIPEndPoint)
@@ -131,9 +156,11 @@ public:
                       const char * ttl,
                       const char * resultFile);
   SIPRegisterHandler * CreateRegisterHandler(const SIPRegister::Params & params);
+  SIPConnection * CreateConnection(const SIPConnection::Init & init);
 
 private:
   bool m_retry423;
+  PString m_statusFile;
 };
 
 /////////////////////////////////////////////////////////////////////////////
